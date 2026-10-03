@@ -1,0 +1,30 @@
+version: "2"
+linters:
+  enable:
+    - errorlint   # obriga errors.Is/As em vez de == e type assertion
+    - wrapcheck   # erros de libs externas devem ser embrulhados
+    - bodyclose
+    - noctx
+    - revive
+  settings:
+    revive:
+      rules:
+        # "todo exportado precisa de comentário" faz sentido para bibliotecas
+        # públicas; num app, gera comentários que só repetem o nome.
+        - name: exported
+          disabled: true
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - .Wrap(
+        - .Internal(
+        - .WithField(
+        - .WithMessage(
+      ignore-package-globs:
+        - github.com/dev-danilocordeiro/go-authkit/*
+        - github.com/gofiber/fiber/v3   # handlers só devolvem o erro para o ErrorHandler
+formatters:
+  enable:
+    - gofmt
+    - goimports
