@@ -3,7 +3,7 @@
 Autenticação e autorização para serviços Go que confiam num provedor OIDC
 (pensado para o **Keycloak**). Usado pelos templates
 [go-modular-monolith](https://github.com/dev-danilocordeiro/go-modular-monolith)
-e (em breve) pelo de microsserviços.
+e [go-microservices](https://github.com/dev-danilocordeiro/go-microservices).
 
 ```bash
 go get github.com/dev-danilocordeiro/go-authkit@latest
@@ -16,8 +16,9 @@ go get github.com/dev-danilocordeiro/go-authkit@latest
 | `authkit` | `Principal` (pessoa **ou** sistema), contexto, erros `ErrUnauthenticated` / `ErrInvalidToken` / `ErrForbidden` |
 | `authkit/oidcauth` | Valida access tokens JWT: assinatura (JWKS), `iss`, `aud`, `exp` e `typ` |
 | `authkit/authz` | Políticas RBAC/ABAC como funções Go combináveis (`Any`, `All`, `Role`, `Service`...) |
-| `authkit/fiberauth` | Middleware Fiber v3: token válido → `Principal` no `context.Context` |
-| `authkit/authtest` | Emissor de tokens no formato do Keycloak para testes, sem precisar de Keycloak |
+| `authkit/fiberauth` | Middleware Fiber v3: token válido → `Principal` (e o token bruto) no `context.Context` |
+| `authkit/s2s` | Chamadas serviço → serviço: client credentials e token exchange (RFC 8693), com cache |
+| `authkit/authtest` | Emissor de tokens e endpoint de token no formato do Keycloak para testes, sem Keycloak |
 
 ## Pessoa ou sistema: o mesmo caminho
 
@@ -82,6 +83,36 @@ if errors.As(err, &f) && f.Forbidden() { /* 403 */ }
 `Message()` dão o código estável e a mensagem segura para o cliente. A causa
 técnica (ex.: "token expirado") fica em `Unwrap()`, para log.
 
+## Serviço chamando serviço (`s2s`)
+
+```go
+tokens, _ := s2s.New(s2s.Config{
+	TokenURL:     "https://auth.exemplo.com/realms/app/protocol/openid-connect/token",
+	ClientID:     "orders-service",
+	ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+})
+usersHTTP := &http.Client{
+	Timeout:   5 * time.Second,
+	Transport: tokens.Transport(nil, "users-service", s2s.Auto),
+}
+// toda requisição feita com o ctx da requisição de entrada sai com o token certo
+req, _ := http.NewRequestWithContext(ctx, "GET", usersURL+"/v1/users/"+id, nil)
+```
+
+| Modo | Token de saída | O serviço chamado vê |
+|---|---|---|
+| `AsService` | client credentials do próprio serviço | o serviço (`Kind: Service`) |
+| `OnBehalfOf` | token exchange do token de entrada | **a pessoa** (`sub` original, `azp` = este serviço) |
+| `Auto` | exchange se quem chamou é pessoa; senão client credentials | a pessoa, ou o serviço |
+
+O token trocado tem **audiência restrita** ao serviço de destino: se vazar,
+não serve para chamar outros serviços. Os dois tipos de token ficam em cache
+até 30s antes de expirar (o exchange, por pessoa e audiência).
+
+No Keycloak (26.2+), o client que faz o exchange precisa de
+`standard.token.exchange.enabled`, de um *audience mapper* para o serviço de
+destino, e de estar no `aud` do token de entrada.
+
 ## Testes
 
 ```go
@@ -94,3 +125,14 @@ expirado := iss.Token(map[string]any{"exp": time.Now().Add(-time.Minute).Unix()}
 ```
 
 Os tokens passam pelo **mesmo** `oidcauth.Verifier` de produção.
+
+Para vários serviços, `iss.WithAudience("users-service")` compartilha a chave
+com outra audiência, e `authtest.NewTokenServer` imita o endpoint de token do
+Keycloak (client credentials + token exchange) para testar o `s2s` sem Keycloak:
+
+```go
+tokens := authtest.NewTokenServer(t, iss, map[string]authtest.ServiceClient{
+	"orders-service": {Secret: "s", Roles: map[string][]string{"users-service": {"users:read"}}},
+})
+tokens.Count("urn:ietf:params:oauth:grant-type:token-exchange") // para testar o cache
+```

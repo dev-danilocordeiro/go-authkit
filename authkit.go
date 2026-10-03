@@ -87,6 +87,21 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
+type tokenCtxKey struct{}
+
+// WithToken guarda o token bruto da requisição. Ele é necessário para
+// chamar outro serviço EM NOME de quem chamou (token exchange, pacote s2s).
+// Fica separado do Principal para não aparecer por acidente em logs.
+func WithToken(ctx context.Context, raw string) context.Context {
+	return context.WithValue(ctx, tokenCtxKey{}, raw)
+}
+
+// TokenFromContext devolve o token bruto da requisição, se houver.
+func TokenFromContext(ctx context.Context) (string, bool) {
+	t, ok := ctx.Value(tokenCtxKey{}).(string)
+	return t, ok && t != ""
+}
+
 // Verifier valida um token bruto e devolve o principal. Implementações:
 // oidcauth (Keycloak/OIDC em produção) e authtest (testes).
 type Verifier interface {

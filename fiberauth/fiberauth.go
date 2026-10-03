@@ -13,7 +13,7 @@ import (
 //
 //   - sem header Authorization  -> segue como anônimo (sem principal no contexto)
 //   - token inválido            -> erro authkit.ErrInvalidToken (401)
-//   - token válido              -> principal no context.Context da requisição
+//   - token válido              -> principal (e o token bruto, para o s2s) no context.Context
 //
 // Quem decide se anônimo pode ou não é a política (authz) na camada de
 // aplicação. Assim a mesma regra vale para chamadas HTTP e para chamadas
@@ -29,11 +29,13 @@ func New(v authkit.Verifier) fiber.Handler {
 		if !ok || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
 			return authkit.ErrInvalidToken.WithMessage("header Authorization deve ser 'Bearer <token>'")
 		}
-		p, err := v.Verify(c.Context(), strings.TrimSpace(token))
+		token = strings.TrimSpace(token)
+		p, err := v.Verify(c.Context(), token)
 		if err != nil {
 			return err //nolint:wrapcheck // já é um *authkit.Error
 		}
-		c.SetContext(authkit.WithPrincipal(c.Context(), p))
+		ctx := authkit.WithPrincipal(c.Context(), p)
+		c.SetContext(authkit.WithToken(ctx, token))
 		return c.Next()
 	}
 }
